@@ -279,6 +279,8 @@ while index < args.count {
         stopServer = true
     case "--normalize-selftest":
         normalizeSelfTest = true
+    case "--delivery-selftest":
+        runDeliverySelfTest()
     case "--log-stats":
         printLogStats = true
     case "--since":
@@ -1258,6 +1260,114 @@ func normalizeText(_ text: String) -> String {
     return out
 }
 
+/// 交付用的归一：和 `normalizeText` 的区别是**保留标点**。
+///
+/// `normalizeText` 是为 CER 比较服务的（口径 drop_punct），拿它做交付文本会把
+/// 用户听到的「这个功能，可以再优化一下。」压成「这个功能可以再优化一下」——
+/// 粘到聊天框里就是一坨没有断句的字。交付文本要的是能直接用的句子，所以：
+///
+/// - 繁 → 简（`--keep-hant` 时跳过，和 normalizeText 一致）
+/// - 半边标点挨着中文时换成全角（`,` → `，`），挨着英文/数字时保持半角
+/// - 连续重复标点收敛成一个（`。。` → `。`，`?!?` → `？`）
+/// - 中文与中文之间的空白删掉，英文单词间的单个空格保留
+/// - 数字中间的标点永远不动（`3.5`、`8-12`、`1,000`）
+/// - 结尾是汉字且整段 ≥ 12 字、又没有终结标点时补一个句号
+func normalizeForDelivery(_ text: String) -> String {
+    let source = keepHant ? text : toSimplified(text)
+    let chars = Array(source)
+    var out: [Character] = []
+    var pendingSpace = false
+
+    func lastVisible() -> Character? { out.last }
+
+    func isCJK(_ ch: Character) -> Bool {
+        guard let s = ch.unicodeScalars.first, ch.unicodeScalars.count == 1 else { return false }
+        return (0x3000...0x303F).contains(s.value) || (0x3400...0x4DBF).contains(s.value)
+            || (0x4E00...0x9FFF).contains(s.value) || (0xF900...0xFAFF).contains(s.value)
+    }
+
+    let halfToFull: [Character: Character] = [
+        ",": "，", ".": "。", "!": "！", "?": "？", ";": "；", ":": "：",
+        "(": "（", ")": "）", "~": "～",
+    ]
+    let terminals: Set<Character> = ["。", "！", "？", "，", "；", "：", "…", ".", "!", "?", ",", ";", ":"]
+
+    for (i, raw) in chars.enumerated() {
+        if raw.isWhitespace {
+            if !out.isEmpty { pendingSpace = true }
+            continue
+        }
+        var ch = raw
+        if ch.isPunctuation, !isDigitPunctuation(chars, i) {
+            // 中文语境下把半边标点换成全角：前一个或后一个是汉字就算中文语境。
+            // 「3.5s,涨到」这种夹在英文和中文之间的逗号也应该变全角。
+            let nextCJK: Bool = {
+                for j in (i + 1)..<chars.count where !chars[j].isWhitespace {
+                    return isCJK(chars[j])
+                }
+                return false
+            }()
+            if let mapped = halfToFull[ch], let prev = lastVisible(),
+               isCJK(prev) || nextCJK || "。，！？；：）".contains(prev) {
+                ch = mapped
+            }
+            // 重复标点只留一个；句号优先于逗号。
+            if let prev = lastVisible(), prev.isPunctuation, !isDigitPunctuation(Array(out), out.count - 1) {
+                if ch == "。" || ch == "！" || ch == "？" {
+                    if out.count > 0 { out.removeLast() }
+                } else {
+                    continue
+                }
+            }
+            pendingSpace = false
+        }
+        if pendingSpace {
+            // 只有「汉字|空格|汉字」这一种空格没有意义；中文与英文之间要留，
+            // 否则「跟 Design Team 过」会粘成「跟Design Team过」。
+            if let prev = lastVisible(), !(isCJK(prev) && isCJK(ch)) {
+                out.append(" ")
+            }
+            pendingSpace = false
+        }
+        out.append(ch)
+    }
+
+    var result = String(out).trimmingCharacters(in: .whitespacesAndNewlines)
+    if let last = result.last, isCJK(last), result.count >= 12, !terminals.contains(last) {
+        result.append("。")
+    }
+    return result
+}
+
+/// 交付归一的单测入口：`sotto-transcribe --delivery-selftest`。
+func runDeliverySelfTest() -> Never {
+    let cases: [(String, String)] = [
+        ("这个功能我觉得可以再优化一下,比如加上自动标点", "这个功能我觉得可以再优化一下，比如加上自动标点。"),
+        ("快遞。", "快递。"),
+        ("快遞，，快遞", "快递，快递"),
+        ("真的?!?", "真的？"),
+        ("温度 3.5s,涨到 4.6s", "温度 3.5s，涨到 4.6s"),
+        ("改成 8-12 秒一段", "改成 8-12 秒一段"),
+        ("1,000 元和 3.5 元", "1,000 元和 3.5 元。"),   // ≥12 字、以汉字收尾 → 补句号
+        ("我们下周一跟 Design Team 过一下 PRD,然后就 push 到 main 分支上测试。",
+         "我们下周一跟 Design Team 过一下 PRD，然后就 push 到 main 分支上测试。"),
+        ("买苹果", "买苹果"),
+        ("", ""),
+    ]
+    var failed = 0
+    for (input, expected) in cases {
+        let got = normalizeForDelivery(input)
+        if got == expected {
+            print("PASS \(input.debugDescription) → \(got.debugDescription)")
+        } else {
+            failed += 1
+            print("FAIL \(input.debugDescription) → \(got.debugDescription)，期望 \(expected.debugDescription)")
+        }
+    }
+    print(failed == 0 ? "OK 交付归一全部通过" : "失败 \(failed) 条")
+    exit(failed == 0 ? 0 : 1)
+}
+
 /// 归一函数的最小单测入口：`sotto-transcribe --normalize-selftest`。
 /// 纯函数，不碰模型 / 音频 / 网络；apps/sotto/tests/normalize_test.sh 调它。
 func runNormalizeSelfTest() -> Never {
@@ -1274,7 +1384,7 @@ func runNormalizeSelfTest() -> Never {
         ("MacBook Pro", "MacBook Pro"),
         ("温度 3.5s，涨到 4.6s", "温度 3.5s涨到 4.6s"),
         ("改成 8-12 秒一段", "改成 8-12 秒一段"),
-        ("1,000 元和 3.5 元", "1,000 元和 3.5 元"),
+        ("1,000 元和 3.5 元", "1,000 元和 3.5 元。"),   // ≥12 字、以汉字收尾 → 补句号
         ("", ""),
     ]
     // 归一只能压字形和标点，不许把字词差异也抹平（抹平就是掩盖问题）。
@@ -1508,7 +1618,7 @@ func transcribeAll(_ engine: (URL, String?, Int) throws -> String) throws -> ([S
         let engineStarted = Date()
         let raw = try engine(segURL, prompt.isEmpty ? nil : prompt, i)
         decodeMS += Int(Date().timeIntervalSince(engineStarted) * 1000)
-        let simplified = normalizeText(raw)
+        let simplified = normalizeForDelivery(raw)
         note(String(format: "seg%d %.2f-%.2fs chars=%d",
                     i, segments[i].start, segments[i].end, simplified.count))
         pieces.append(simplified)
@@ -1547,7 +1657,7 @@ if !transcribed {
     }
 }
 
-let (corrected, substitutions) = recoverTerms(Array(normalizeText(pieces.joined())), terms: terms)
+let (corrected, substitutions) = recoverTerms(Array(pieces.joined().trimmingCharacters(in: .whitespaces)), terms: terms)
 if debug, !substitutions.isEmpty {
     note("dict " + substitutions.map { "\($0.0)→\($0.1)(\($0.2))" }.joined(separator: " "))
 }

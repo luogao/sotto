@@ -122,6 +122,10 @@
   去标点（数字之间的 `-` / `.` / `,` 保留）、连续空白收敛成一个空格。`快遞。` / `快递` / `快递!!`
   都归一成 `快递`；POC 量 CER 时本来就用 zhconv + drop_punct 归一，产品输出也得归。
   单测：`bash apps/sotto/tests/normalize_test.sh`（走产物的 `--normalize-selftest`，不复制第二份实现）。
+
+交付文本另有一条 `--delivery-selftest`：`normalizeText` 是给 CER 比较用的（去标点），
+`normalizeForDelivery` 是给用户看的（保留并规范化标点）。两条都挂在同一个二进制上，
+改归一时两个 selftest 都要跑。
 - 退出码：0 成功；1 用法 / 音频 / whisper 失败；2 模型不存在；3 找不到 `whisper-cli`。
   2 和 3 在读音频之前就判，缺件 20ms 内说清楚。
 - 不进网络、不加依赖：模型只按路径传，缺了就报错，**没有首次启动下载**。

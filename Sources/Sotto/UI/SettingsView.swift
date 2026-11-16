@@ -43,11 +43,14 @@ final class SettingsModel: ObservableObject {
     @Published var modelSource: String = ""
     @Published var modelSize: String = ""
     @Published var canResetModel = false
+    @Published var termsCount: Int = 0
+    @Published var termsPathText: String = ""
 
     var onToggleCapture: () -> Void = {}
     var onLoggingChange: (Bool) -> Void = { _ in }
     var onPickModel: () -> Void = {}
     var onResetModel: () -> Void = {}
+    var onEditTerms: () -> Void = {}
 
     let logPathText = "~/Library/Caches/sotto/sotto.log"
 }
@@ -61,18 +64,19 @@ struct SettingsView: View {
             HStack(spacing: 0) {
                 rail
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 30) {
+                    VStack(alignment: .leading, spacing: 22) {
                         generalSection.id(1)
                         modelSection.id(2)
-                        versionSection.id(3)
+                        termsSection.id(3)
+                        versionSection.id(4)
                     }
-                    .padding(EdgeInsets(top: 22, leading: 26, bottom: 22, trailing: 26))
+                    .padding(EdgeInsets(top: 18, leading: 26, bottom: 18, trailing: 26))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             footer
         }
-        .frame(width: 620, height: 634)
+        .frame(width: 620, height: 700)
         .background(SottoTheme.bg)
         .preferredColorScheme(.dark)
     }
@@ -93,7 +97,8 @@ struct SettingsView: View {
             VStack(spacing: 2) {
                 RailItem(n: "01", label: "通用", selected: selected == 1) { selected = 1 }
                 RailItem(n: "02", label: "模型", selected: selected == 2) { selected = 2 }
-                RailItem(n: "03", label: "版本", selected: selected == 3) { selected = 3 }
+                RailItem(n: "03", label: "热词", selected: selected == 3) { selected = 3 }
+                RailItem(n: "04", label: "版本", selected: selected == 4) { selected = 4 }
             }
             .padding(.top, 20)
 
@@ -110,7 +115,7 @@ struct SettingsView: View {
             }
         }
         .padding(EdgeInsets(top: 20, leading: 16, bottom: 20, trailing: 16))
-        .frame(width: 148, height: 600, alignment: .topLeading)
+        .frame(width: 148, height: 666, alignment: .topLeading)
         .background(SottoTheme.bg)
         .overlay(alignment: .trailing) {
             Rectangle().fill(Color.white.opacity(0.10)).frame(width: 1)
@@ -145,7 +150,7 @@ struct SettingsView: View {
             .padding(.leading, 2)
             .padding(.top, 8)
 
-            Divider().overlay(SottoTheme.line).padding(.vertical, 18)
+            Divider().overlay(SottoTheme.line).padding(.vertical, 14)
 
             LabeledRow(title: "事件日志", note: "只记时间、耗时、字数，不记识别文本") {
                 Toggle("", isOn: Binding(
@@ -197,22 +202,59 @@ struct SettingsView: View {
             }
             .padding(.top, 14)
 
-            Text("发行包自带 medium-q5_0，换模型只需要选一次，不用重启。")
+            Text("发行包自带 medium-q5_0；换模型选一次就生效，不用重启。")
                 .font(.system(size: 11))
                 .foregroundStyle(SottoTheme.ink2)
                 .padding(.top, 10)
         }
     }
 
-    // MARK: - 03 版本
+    // MARK: - 03 热词
+
+    private var termsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(n: "03", title: "热词")
+
+            LabeledRow(title: "已载入", note: "整行一个词，'#' 开头当注释") {
+                Text(model.termsCount == 0 ? "0 条（未启用）" : "\(model.termsCount) 条")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(model.termsCount == 0 ? SottoTheme.ink2 : SottoTheme.accent)
+            }
+
+            LabeledRow(title: "文件", note: nil) {
+                Text(model.termsPathText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(SottoTheme.ink3)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(model.termsPathText)
+                    .frame(maxWidth: 300, alignment: .trailing)
+            }
+
+            HStack(spacing: 8) {
+                Button("编辑热词") { model.onEditTerms() }
+                    .buttonStyle(SottoButtonStyle(primary: true))
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+
+            Text("人名、项目名、专业词写进去，识别会跟着走，改完下次录音生效。")
+                .font(.system(size: 11))
+                .foregroundStyle(SottoTheme.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+        }
+    }
+
+    // MARK: - 04 版本
 
     private var versionSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(n: "03", title: "版本")
+            SectionHeader(n: "04", title: "版本")
 
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 Text(SottoInfo.versionLine)
-                    .font(.system(size: 24, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
                     .foregroundStyle(SottoTheme.ink)
                 Text(buildTag)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
@@ -224,25 +266,17 @@ struct SettingsView: View {
                         RoundedRectangle(cornerRadius: 3)
                             .stroke(SottoTheme.accent.opacity(0.55), lineWidth: 1)
                     )
-            }
-            .padding(.bottom, 4)
-
-            Text("菜单栏语音输入 · 本地 whisper 转写 · MIT")
-                .font(.system(size: 12))
-                .foregroundStyle(SottoTheme.ink2)
-
-            HStack(spacing: 8) {
+                Spacer(minLength: 8)
                 Button("查看更新") { NSWorkspace.shared.open(SottoInfo.releases) }
                     .buttonStyle(SottoButtonStyle(primary: true))
-                Button("复制诊断信息") { copyDiagnostics() }
+                Button("复制诊断") { copyDiagnostics() }
                     .buttonStyle(SottoButtonStyle())
             }
-            .padding(.top, 16)
 
-            Text("升级：brew upgrade --cask \(SottoInfo.owner)/tap/\(SottoInfo.slug)，或重新下载 DMG。")
-                .font(.system(size: 11, design: .monospaced))
+            Text("升级：brew upgrade --cask \(SottoInfo.owner)/tap/\(SottoInfo.slug)　·　本地转写，MIT")
+                .font(.system(size: 10.5, design: .monospaced))
                 .foregroundStyle(SottoTheme.ink2)
-                .padding(.top, 12)
+                .padding(.top, 10)
         }
     }
 
@@ -256,6 +290,7 @@ struct SettingsView: View {
         macOS \(ProcessInfo.processInfo.operatingSystemVersionString)
         热键：\(model.hotKeyText)
         模型：\(model.modelPathText)（\(model.modelSource)，\(model.modelSize)）
+        热词：\(model.termsCount) 条（\(model.termsPathText)）
         日志：\(model.logPathText)
         """
         NSPasteboard.general.clearContents()

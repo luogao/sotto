@@ -114,6 +114,8 @@ flowchart LR
 - **模型预检**：起进程之前先查文件，缺失与损坏分别有独立文案和日志码
   （`model_missing` / `model_unreadable`），4KB 垃圾文件不会被送进 whisper
 
+热词表默认读 `~/Library/Application Support/Sotto/terms.txt`（一行一个词，`#` 注释），设置面板第三栏可以直接编辑。
+
 更多调参细节（分段策略、热词 prompt、greedy 对齐、CER 口径）见
 [docs/ENGINEERING.md](docs/ENGINEERING.md)。
 

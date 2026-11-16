@@ -246,6 +246,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ("write_ms", "\(capture.writeMS)"),
             ("reason", reason),
         ])
+        // 松手到出字有半秒到一秒的空档，不给反馈用户会以为没录上又按一次。
+        hud.show("正在转写…")
         process(wav: capture.url)
     }
 

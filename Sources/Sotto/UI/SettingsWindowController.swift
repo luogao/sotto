@@ -21,6 +21,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     var onLoggingChange: ((Bool) -> Void)?
     /// 模型键变了（选择 / 恢复默认）才回调；点「取消」不触发。
     var onModelChange: ((String?) -> Void)?
+    /// 热词文件被打开/修改后由 AppDelegate 决定是否要重置转写缓存（当前无需）。
+    var onTermsEdit: (() -> Void)?
 
     private var monitor: Any?
     private var isCapturing = false
@@ -32,6 +34,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.onLoggingChange = { [weak self] enabled in self?.loggingChanged(enabled) }
         model.onPickModel = { [weak self] in self?.chooseModel() }
         model.onResetModel = { [weak self] in self?.resetModel() }
+        model.onEditTerms = { [weak self] in self?.editTerms() }
         refresh()
     }
 
@@ -67,6 +70,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let effective = settings.modelPath ?? SottoPaths.defaultModelPath().path
         model.modelSize = Self.humanSize(of: effective)
         model.canResetModel = settings.modelPath != nil
+        model.termsPathText = Self.abbreviate(Self.termsURL.path)
+        model.termsCount = Self.termsCount()
     }
 
     private static func humanSize(of path: String) -> String {
@@ -78,10 +83,51 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return fmt.string(fromByteCount: bytes)
     }
 
+    // MARK: - 热词
+
+    /// 热词表是纯文本文件，路径和 sotto-transcribe 的默认值一致：
+    /// `~/Library/Application Support/Sotto/terms.txt`。一行一个词。
+    static var termsURL: URL {
+        URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent("Library/Application Support/Sotto/terms.txt")
+    }
+
+    static func termsCount() -> Int {
+        guard let data = FileManager.default.contents(atPath: termsURL.path),
+              let text = String(data: data, encoding: .utf8) else { return 0 }
+        return text.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+            .count
+    }
+
+    private static func abbreviate(_ path: String) -> String {
+        let home = NSHomeDirectory()
+        return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+    }
+
+    /// 文件不存在就先落一份带注释的模板，再交给系统默认编辑器打开——
+    /// 让用户自己去找这个目录是不现实的。
+    private func editTerms() {
+        let url = Self.termsURL
+        if !FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                     withIntermediateDirectories: true)
+            let template = """
+            # Sotto 热词表：一行一个词，'#' 开头是注释。
+            # 写人名、项目名、产品名、专业词。改完下次录音生效。
+            """
+            try? template.write(to: url, atomically: true, encoding: .utf8)
+        }
+        NSWorkspace.shared.open(url)
+        onTermsEdit?()
+        // 编辑器保存后没有回调，关面板时再数一次即可（见 refresh）。
+    }
+
     // MARK: - 窗口
 
     private func makeWindow() -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 634),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
                               styleMask: [.titled, .closable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "Sotto 设置"
@@ -95,7 +141,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // 菜单栏 app 没有 Dock 图标可点，窗口开在别的 app 后面等于「点了没反应」。
         window.level = .floating
         window.contentView = NSHostingView(rootView: SettingsView(model: model))
-        window.setContentSize(NSSize(width: 620, height: 634))
+        window.setContentSize(NSSize(width: 620, height: 700))
         return window
     }
 
